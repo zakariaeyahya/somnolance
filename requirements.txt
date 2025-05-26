@@ -10,3 +10,6 @@ tensorflow
 scikit-learn
 streamlit
 Pillow
+pandas
+plotly
+pygame
