@@ -7,6 +7,8 @@ from tensorflow.keras.models import load_model
 import tempfile
 import os
 from PIL import Image
+import pygame
+import threading
 
 # Configuration de la page
 st.set_page_config(
@@ -50,6 +52,37 @@ def load_cascades():
         return face_cascade, eye_cascade, None
     except Exception as e:
         return None, None, f"Erreur cascade: {str(e)}"
+
+@st.cache_resource
+def initialize_audio():
+    """Initialise le système audio pygame"""
+    try:
+        pygame.mixer.init()
+        return True, None
+    except Exception as e:
+        return False, f"Erreur audio: {str(e)}"
+
+def play_alarm_sound(audio_file="alarm.wav"):
+    """Joue le son d'alarme dans un thread séparé"""
+    def play_sound():
+        try:
+            if os.path.exists(audio_file):
+                sound = pygame.mixer.Sound(audio_file)
+                sound.play()
+            else:
+                # Son de fallback - beep système
+                try:
+                    import winsound
+                    winsound.Beep(2500, 1000)  # 2500 Hz pendant 1 seconde
+                except:
+                    print("\a")  # Beep ASCII
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture audio: {e}")
+    
+    # Jouer le son dans un thread séparé pour ne pas bloquer l'interface
+    thread = threading.Thread(target=play_sound)
+    thread.daemon = True
+    thread.start()
 
 def preprocess_eye(eye_frame):
     """Prétraite l'image de l'œil pour la prédiction"""
@@ -101,26 +134,49 @@ def detect_eyes_state(frame, model, face_cascade, eye_cascade):
                               (eye_x, eye_y-10), cv2.FONT_HERSHEY_SIMPLEX, 
                               0.6, color, 2)
     
-    # Déterminer l'état global
+    # Déterminer l'état global - MODIFIÉ pour détecter si AU MOINS un œil est fermé
     if eye_states:
-        all_closed = all(state == 0 for state in eye_states)
-        status = "YEUX FERMÉS" if all_closed else "YEUX OUVERTS"
-        color = (0, 0, 255) if all_closed else (0, 255, 0)
+        # Compter les yeux fermés
+        closed_eyes_count = sum(1 for state in eye_states if state == 0)
+        total_eyes = len(eye_states)
+        
+        # Alerte si au moins 1 œil fermé (au lieu de tous fermés)
+        any_closed = closed_eyes_count >= 1
+        
+        if any_closed:
+            if closed_eyes_count == total_eyes:
+                status = "TOUS LES YEUX FERMÉS"
+            else:
+                status = f"{closed_eyes_count}/{total_eyes} YEUX FERMÉS"
+            color = (0, 0, 255)
+        else:
+            status = "YEUX OUVERTS"
+            color = (0, 255, 0)
     else:
         status = "AUCUN ŒIL DÉTECTÉ"
         color = (255, 255, 255)
-        all_closed = False
+        any_closed = False
     
     # Afficher le statut principal
     cv2.putText(annotated_frame, status, (50, 50), 
                 cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
     
-    return annotated_frame, all_closed
+    # Afficher le nombre d'yeux détectés
+    if eye_states:
+        cv2.putText(annotated_frame, f"Yeux détectés: {len(eye_states)}", (50, 150), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    
+    return annotated_frame, any_closed
 
 def main():
     # Titre centré
     st.markdown("<h1 style='text-align: center;'>👁️ Détection de Somnolence</h1>", 
                 unsafe_allow_html=True)
+    
+    # Initialiser l'audio
+    audio_ready, audio_error = initialize_audio()
+    if not audio_ready:
+        st.warning(f"⚠️ {audio_error}")
     
     # Charger le modèle et les cascades
     model, model_error = load_drowsiness_model()
@@ -139,11 +195,20 @@ def main():
     st.success("✅ Modèle et cascades chargés avec succès")
     
     # Contrôles simples
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         camera_active = st.checkbox("🎥 Activer la caméra", value=False)
     with col2:
-        threshold = st.slider("⏰ Seuil d'alerte (secondes)", 1.0, 10.0, 2.5, 0.5)
+        threshold = st.slider("⏰ Seuil d'alerte (secondes)", 0.5, 10.0, 2.5, 0.5)
+    with col3:
+        audio_file = st.text_input("🔊 Fichier audio", value=r"D:\bureau\BD&AI 1\ci2\S2\droite\alarm.wav", 
+                                  help="Chemin vers le fichier audio d'alarme")
+    
+    # Afficher le statut audio
+    if os.path.exists(audio_file):
+        st.success(f"🔊 Fichier audio trouvé: {audio_file}")
+    else:
+        st.warning(f"⚠️ Fichier audio non trouvé: {audio_file} (utilisation du beep système)")
     
     # Conteneur pour la vidéo
     video_container = st.empty()
@@ -155,6 +220,8 @@ def main():
             st.session_state.eyes_closed_start = None
         if 'alert_active' not in st.session_state:
             st.session_state.alert_active = False
+        if 'last_alarm_time' not in st.session_state:
+            st.session_state.last_alarm_time = 0
         
         # Initialiser la caméra
         cap = cv2.VideoCapture(0)
@@ -185,8 +252,19 @@ def main():
                 
                 elapsed_time = current_time - st.session_state.eyes_closed_start
                 
-                if elapsed_time > threshold and not st.session_state.alert_active:
-                    st.session_state.alert_active = True
+                # Déclencher l'alarme dès que le seuil est atteint
+                if elapsed_time > threshold:
+                    if not st.session_state.alert_active:
+                        st.session_state.alert_active = True
+                        # Jouer l'alarme
+                        play_alarm_sound(audio_file)
+                        st.session_state.last_alarm_time = current_time
+                    
+                    # Rejouer l'alarme toutes les 3 secondes si les yeux restent fermés
+                    elif current_time - st.session_state.last_alarm_time > 3.0:
+                        play_alarm_sound(audio_file)
+                        st.session_state.last_alarm_time = current_time
+                    
                     # Ajouter un cadre rouge d'alerte
                     h, w = processed_frame.shape[:2]
                     cv2.rectangle(processed_frame, (0, 0), (w, h), (0, 0, 255), 5)
@@ -204,17 +282,18 @@ def main():
             processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
             
             # Afficher l'image
-            video_container.image(processed_frame_rgb, channels="RGB", use_column_width=True)
+            video_container.image(processed_frame_rgb, channels="RGB", use_container_width=True)
             
             # Statut en temps réel
             if st.session_state.alert_active:
-                status_container.error("🚨 ALERTE SOMNOLENCE DÉTECTÉE!")
+                status_container.error("🚨 ALERTE SOMNOLENCE DÉTECTÉE! 🔊")
             elif eyes_closed:
-                status_container.warning(f"😴 Yeux fermés depuis {elapsed_time:.1f}s")
+                elapsed_time = current_time - st.session_state.eyes_closed_start if st.session_state.eyes_closed_start else 0
+                status_container.warning(f"😴 Au moins un œil fermé depuis {elapsed_time:.1f}s")
             else:
                 status_container.success("👀 Surveillance active")
             
-            # Petite pause pour éviter la surcharge
+            # Pause plus longue pour réduire les FPS (de 0.1s à 0.2s = ~5 FPS au lieu de ~10 FPS)
             time.sleep(0.1)
         
         # Libérer la caméra
