@@ -589,7 +589,6 @@ def create_advanced_controls():
         'smart_pause': smart_pause,
         'analytics': analytics
     }
-
 def create_realtime_charts(detection_history):
     """Crée des graphiques en temps réel"""
     if len(detection_history) < 5:
@@ -651,10 +650,14 @@ def create_realtime_charts(detection_history):
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(fig_trend, use_container_width=True, key=f"trend_chart_{int(time.time()*1000)}")
     with col2:
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_chart_{int(time.time()*1000)}")
 def main():
+    # Initialize session state for stats BEFORE calling create_dashboard
+    if 'stats' not in st.session_state:
+        st.session_state.stats = AdvancedStats()
+    
     # Initialisation de l'interface créative
     create_dashboard()
 
@@ -667,22 +670,7 @@ def main():
         face_cascade, eye_cascade, cascade_error = load_cascades()
         audio_ready, audio_error = initialize_audio()
 
-    # Vérification des erreurs
-    if model_error:
-        st.error(f"❌ {model_error}")
-        st.info("💡 Assurez-vous que le modèle est disponible dans 'saved_model/eye_state_model_final.h5'")
-        return
-
-    if cascade_error:
-        st.error(f"❌ {cascade_error}")
-        return
-
-    if not audio_ready:
-        st.warning(f"⚠️ {audio_error}")
-
-    # Initialize session state for stats if it doesn't exist
-    if 'stats' not in st.session_state:
-        st.session_state.stats = AdvancedStats()
+    # ... reste du code inchangé
 
     # Interface de contrôle principal
     col1, col2, col3 = st.columns([2, 1, 1])
