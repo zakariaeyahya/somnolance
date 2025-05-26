@@ -1,0 +1,25 @@
+# Option 1: Entraînement simple
+python eye_state_detection.py
+
+# Option 2: Avec le script de test intégré
+python test_model.py --mode train
+
+# Option 3: Entraînement et test
+python test_model.py --mode both
+
+Modèle sauvegardé dans saved_model/eye_state_model_final.h5
+Graphiques de performance dans saved_model/training_results.png
+Précision affichée en console
+
+tape 3: Tester le modèle (optionnel)
+bash# Tester uniquement
+python test_model.py --mode test
+Étape 4: Lancer la détection en temps réel
+bash# Version basique
+python main.py
+
+# Version avec script personnalisé
+python script.py
+
+# Avec paramètres personnalisés
+python script.py --threshold 3.0 --camera 0 --use_score

@@ -3,3 +3,10 @@ numpy
 matplotlib
 tensorflow
 scikit-learn
+opencv-python
+numpy
+matplotlib
+tensorflow
+scikit-learn
+streamlit
+Pillow
