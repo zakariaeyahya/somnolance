@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import logging
-
+import time
 logger = logging.getLogger(__name__)
 
 class DashboardService:
@@ -228,7 +228,9 @@ class DashboardService:
                 plot_bgcolor='rgba(0,0,0,0)'
             )
             
-            st.plotly_chart(fig_trend, use_container_width=True)
+            # Ajouter une clé unique basée sur le timestamp
+            unique_key = f"trend_chart_{int(time.time() * 1000)}"
+            st.plotly_chart(fig_trend, use_container_width=True, key=unique_key)
         
         with col2:
             # Jauge de niveau actuel
@@ -262,7 +264,9 @@ class DashboardService:
                 plot_bgcolor='rgba(0,0,0,0)'
             )
             
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            # Ajouter une clé unique basée sur le timestamp
+            unique_key_gauge = f"gauge_chart_{int(time.time() * 1000)}"
+            st.plotly_chart(fig_gauge, use_container_width=True, key=unique_key_gauge)
     
     def create_advanced_analytics(self):
         """Crée les analyses avancées"""
@@ -396,7 +400,8 @@ class DashboardService:
             plot_bgcolor='rgba(0,0,0,0)'
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        unique_key_trend = f"trend_analysis_{int(time.time() * 1000)}"
+        st.plotly_chart(fig, use_container_width=True, key=unique_key_trend)
         
         # Afficher les statistiques de tendance
         col1, col2, col3 = st.columns(3)
@@ -475,7 +480,7 @@ class DashboardService:
         
         sensitivity = st.sidebar.slider(
             "🎚️ Sensibilité",
-            0.3, 2.0, profile_settings['sensitivity'], 0.1,
+            0.3, 10.0, profile_settings['sensitivity'], 0.1,
             help="Ajuste la sensibilité de détection"
         )
         

@@ -251,9 +251,8 @@ class GuardianEyeApp:
         
         # Section d'aide
         self._create_help_section()
-    
     def _run_surveillance_loop(self, services, settings, status_container, 
-                              charts_container, video_container, advice_container):
+                            charts_container, video_container, advice_container):
         """Lance la boucle de surveillance principale"""
         
         # Extraire les services
@@ -283,10 +282,18 @@ class GuardianEyeApp:
         
         # Variables de surveillance
         last_analytics_update = time.time()
+        last_status_update = time.time()
         frame_skip_counter = 0
         
         # Conteneurs pour mise à jour temps réel
         frame_placeholder = video_container.empty()
+        
+        # Créer le bouton d'arrêt une seule fois
+        stop_container = st.empty()
+        with stop_container.container():
+            if st.button("⏹️ Arrêter la surveillance", key="stop_surveillance_main"):
+                st.session_state.camera_active = False
+                st.rerun()
         
         try:
             while st.session_state.camera_active and not st.session_state.emergency_stop:
@@ -299,8 +306,8 @@ class GuardianEyeApp:
                 current_time = time.time()
                 st.session_state.frame_count += 1
                 
-                # Optimisation: traiter 1 frame sur 3 pour les performances
-                if frame_skip_counter % 3 == 0:
+                # Optimisation: traiter 1 frame sur 2 pour les performances
+                if frame_skip_counter % 2 == 0:
                     # Détection des visages et yeux
                     faces, eyes_data = detection_service.detect_faces_and_eyes(frame)
                     
@@ -324,10 +331,13 @@ class GuardianEyeApp:
                         audio_service, analytics_service
                     )
                     
-                    # Mise à jour du statut
-                    dashboard_service.create_status_display(
-                        drowsiness_analysis, st.session_state.alert_active
-                    )
+                    # Mise à jour du statut (moins fréquente)
+                    if current_time - last_status_update > 0.5:  # Mise à jour toutes les 0.5 secondes
+                        with status_container.container():
+                            dashboard_service.create_status_display(
+                                drowsiness_analysis, st.session_state.alert_active
+                            )
+                        last_status_update = current_time
                     
                     # Afficher l'image traitée
                     annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
@@ -339,19 +349,21 @@ class GuardianEyeApp:
                             dashboard_service.create_realtime_charts()
                         last_analytics_update = current_time
                     
-                    # Conseils intelligents
-                    self._provide_smart_advice(
-                        analytics_service, advice_container, current_time, settings
-                    )
+                    # Conseils intelligents (encore moins fréquent)
+                    if frame_skip_counter % 20 == 0:  # Toutes les 20 frames traitées
+                        self._provide_smart_advice(
+                            analytics_service, advice_container, current_time, settings
+                        )
                 
                 frame_skip_counter += 1
                 
-                # Contrôle de vitesse
-                time.sleep(0.05 if frame_skip_counter % 3 == 0 else 0.02)
+                # Contrôle de vitesse réduit pour plus de FPS
+                time.sleep(0.01 if frame_skip_counter % 2 == 0 else 0.005)
                 
-                # Vérifier l'état de l'interface
-                if st.button("⏹️ Arrêter la surveillance", key=f"stop_{st.session_state.frame_count}"):
-                    break
+                # Vérifier si l'utilisateur veut arrêter (check périodique)
+                if frame_skip_counter % 10 == 0:  # Check toutes les 10 frames
+                    if not st.session_state.camera_active:
+                        break
         
         except Exception as e:
             logger.error(f"Erreur dans la boucle de surveillance: {e}")
@@ -361,6 +373,9 @@ class GuardianEyeApp:
             # Libérer les ressources
             cap.release()
             audio_service.stop_all_alarms()
+            
+            # Nettoyer le bouton d'arrêt
+            stop_container.empty()
             
             # Afficher le rapport de session
             self._show_session_report(analytics_service, dashboard_service)
