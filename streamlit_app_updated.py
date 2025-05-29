@@ -17,7 +17,8 @@ from services import (
     DetectionService, 
     AudioService,
     AnalyticsService,
-    DashboardService
+    DashboardService,
+    CSVExportService  
 )
 from services.config_service import ConfigService
 
@@ -115,14 +116,16 @@ class GuardianEyeApp:
             
             # Service de dashboard
             dashboard_service = DashboardService(analytics_service)
-            
+            # Service d'export CSV
+            csv_export_service = CSVExportService()
             services = {
                 'config': config_service,
                 'model': model_service,
                 'detection': detection_service,
                 'audio': audio_service,
                 'analytics': analytics_service,
-                'dashboard': dashboard_service
+                'dashboard': dashboard_service,
+                'csv_export': csv_export_service
             }
             
             # Vérifier les erreurs
@@ -252,8 +255,8 @@ class GuardianEyeApp:
         # Section d'aide
         self._create_help_section()
     def _run_surveillance_loop(self, services, settings, status_container, 
-                            charts_container, video_container, advice_container):
-        """Lance la boucle de surveillance principale"""
+                        charts_container, video_container, advice_container):
+        """Lance la boucle de surveillance principale avec export CSV"""
         
         # Extraire les services
         model_service = services['model']
@@ -262,6 +265,7 @@ class GuardianEyeApp:
         analytics_service = services['analytics']
         dashboard_service = services['dashboard']
         config_service = services['config']
+        csv_export_service = services['csv_export']  # Service d'export CSV
         
         # Vérifier que les services sont prêts
         if not model_service.is_ready():
@@ -280,10 +284,20 @@ class GuardianEyeApp:
         
         st.success("✅ Guardian Eye activé - Surveillance en cours")
         
+        # Générer un ID de session unique
+        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        session_start_time = time.time()
+        
         # Variables de surveillance
         last_analytics_update = time.time()
         last_status_update = time.time()
+        last_csv_export = time.time()
         frame_skip_counter = 0
+        
+        # Variables pour calcul du FPS réel
+        fps_counter = 0
+        fps_start_time = time.time()
+        current_fps = config_service.camera.fps
         
         # Conteneurs pour mise à jour temps réel
         frame_placeholder = video_container.empty()
@@ -297,6 +311,7 @@ class GuardianEyeApp:
         
         try:
             while st.session_state.camera_active and not st.session_state.emergency_stop:
+                frame_start_time = time.time()
                 ret, frame = cap.read()
                 
                 if not ret:
@@ -305,6 +320,14 @@ class GuardianEyeApp:
                 
                 current_time = time.time()
                 st.session_state.frame_count += 1
+                fps_counter += 1
+                
+                # Calculer le FPS réel toutes les 30 frames
+                if fps_counter >= 30:
+                    elapsed_time = current_time - fps_start_time
+                    current_fps = fps_counter / elapsed_time if elapsed_time > 0 else config_service.camera.fps
+                    fps_counter = 0
+                    fps_start_time = current_time
                 
                 # Optimisation: traiter 1 frame sur 2 pour les performances
                 if frame_skip_counter % 2 == 0:
@@ -324,6 +347,30 @@ class GuardianEyeApp:
                         drowsiness_analysis['any_eye_closed'],
                         drowsiness_analysis['average_confidence']
                     )
+                    
+                    # Calculer le temps de traitement
+                    processing_time_ms = (time.time() - frame_start_time) * 1000
+                    
+                    # Préparer les données de performance de la frame
+                    frame_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'frame_number': st.session_state.frame_count,
+                        'fps': round(current_fps, 2),
+                        'faces_detected': len(faces),
+                        'eyes_detected': len(eyes_data),
+                        'eyes_closed': drowsiness_analysis['any_eye_closed'],
+                        'drowsiness_level': drowsiness_analysis.get('drowsiness_level', 0),
+                        'confidence': round(drowsiness_analysis['average_confidence'], 3),
+                        'processing_time_ms': round(processing_time_ms, 2),
+                        'alert_active': st.session_state.alert_active
+                    }
+                    
+                    # Enregistrer dans le CSV toutes les 10 frames pour éviter trop d'écritures
+                    if st.session_state.frame_count % 10 == 0:
+                        try:
+                            csv_export_service.log_frame_performance(session_id, frame_data)
+                        except Exception as csv_error:
+                            logger.warning(f"Erreur d'export CSV: {csv_error}")
                     
                     # Gestion des alertes
                     self._handle_drowsiness_alerts(
@@ -376,6 +423,28 @@ class GuardianEyeApp:
             
             # Nettoyer le bouton d'arrêt
             stop_container.empty()
+            
+            # Calculer et enregistrer le résumé de session
+            try:
+                session_duration = time.time() - session_start_time
+                session_summary = analytics_service.get_session_summary()
+                
+                # Ajouter des informations supplémentaires au résumé
+                enhanced_summary = {
+                    **session_summary,
+                    'session_id': session_id,
+                    'session_duration_seconds': round(session_duration, 2),
+                    'total_frames_processed': st.session_state.frame_count,
+                    'average_fps': round(st.session_state.frame_count / session_duration, 2) if session_duration > 0 else 0,
+                    'end_timestamp': datetime.now().isoformat()
+                }
+                
+                csv_export_service.log_session_summary(session_id, enhanced_summary, settings)
+                st.info(f"📊 Données de session exportées vers CSV (ID: {session_id})")
+                
+            except Exception as export_error:
+                logger.error(f"Erreur lors de l'export du résumé de session: {export_error}")
+                st.warning("⚠️ Erreur lors de l'export des données de session")
             
             # Afficher le rapport de session
             self._show_session_report(analytics_service, dashboard_service)
@@ -460,8 +529,8 @@ class GuardianEyeApp:
                     "Clignez volontairement plus souvent pour hydrater vos yeux."
                 )
     
-    def _show_session_report(self, analytics_service, dashboard_service):
-        """Affiche le rapport de session détaillé"""
+    def _show_session_report(self, analytics_service, dashboard_service, services=None, session_id=None):
+        """Affiche le rapport de session détaillé avec export CSV"""
         
         st.success("📊 Session de surveillance terminée")
         
@@ -478,10 +547,10 @@ class GuardianEyeApp:
             dashboard_service.create_trend_analysis_chart()
             
             # Export des données
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             
             with col1:
-                if st.button("💾 Exporter les Données"):
+                if st.button("💾 Exporter JSON", key="export_json"):
                     export_data = analytics_service.export_data_for_analysis()
                     st.download_button(
                         label="📄 Télécharger Rapport JSON",
@@ -492,18 +561,48 @@ class GuardianEyeApp:
                     st.success("✅ Données préparées pour export")
             
             with col2:
-                if st.button("📧 Partager Rapport"):
+                if st.button("📊 Exporter Performance CSV", key="export_csv"):
+                    if services and 'csv_export' in services and session_id:
+                        try:
+                            csv_export_service = services['csv_export']
+                            filepath = csv_export_service.export_session_to_csv(session_id, analytics_service)
+                            
+                            if filepath and os.path.exists(filepath):
+                                st.success(f"✅ Session exportée: {os.path.basename(filepath)}")
+                                
+                                # Permettre le téléchargement
+                                try:
+                                    with open(filepath, 'rb') as f:
+                                        csv_data = f.read()
+                                        st.download_button(
+                                            label="💾 Télécharger CSV",
+                                            data=csv_data,
+                                            file_name=os.path.basename(filepath),
+                                            mime="text/csv",
+                                            key="download_csv"
+                                        )
+                                except Exception as download_error:
+                                    st.error(f"❌ Erreur de téléchargement: {download_error}")
+                            else:
+                                st.error("❌ Erreur lors de l'export CSV")
+                        except Exception as export_error:
+                            st.error(f"❌ Erreur lors de l'export: {export_error}")
+                    else:
+                        st.warning("⚠️ Service CSV non disponible ou session invalide")
+            
+            with col3:
+                if st.button("📧 Partager Rapport", key="share_report"):
                     summary = analytics_service.get_session_summary()
-                    report_text = f"""
-Rapport Guardian Eye - {datetime.now().strftime('%d/%m/%Y %H:%M')}
+                    report_text = f"""Rapport Guardian Eye - {datetime.now().strftime('%d/%m/%Y %H:%M')}
 
-RÉSUMÉ:
-- Durée: {summary['session_duration']/60:.0f} minutes
-- Alertes: {summary['total_alerts']}
-- Score Vigilance: {summary['vigilance_score']:.0f}/100
-- Niveau Risque: {summary['risk_index']:.1f}%
+    RÉSUMÉ:
+    - Durée: {summary.get('session_duration', 0)/60:.0f} minutes
+    - Alertes: {summary.get('total_alerts', 0)}
+    - Score Vigilance: {summary.get('vigilance_score', 0):.0f}/100
+    - Niveau Risque: {summary.get('risk_index', 0):.1f}%
 
-RECOMMANDATION: {self._get_recommendation_text(summary)}
+    RECOMMANDATION:
+    {self._get_recommendation_text(summary)}
                     """
                     st.text_area("📝 Rapport à Partager", report_text, height=200)
     

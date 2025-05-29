@@ -8,13 +8,15 @@ from .detection_service import DetectionService
 from .audio_service import AudioService
 from .analytics_service import AnalyticsService
 from .dashboard_service import DashboardService
+from .csv_export_service import CSVExportService   
 
 __all__ = [
     'ModelService',
     'DetectionService', 
     'AudioService',
     'AnalyticsService',
-    'DashboardService'
+    'DashboardService',
+        'CSVExportService' 
 ]
 
 __version__ = "1.0.0"
