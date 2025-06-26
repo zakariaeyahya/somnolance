@@ -1,5 +1,4 @@
- 
-```markdown
+
 # Projet de Détection de l'État des Yeux et de Somnolence
 
 Ce projet vise à détecter si les yeux d'une personne sont ouverts ou fermés en utilisant un modèle de réseau de neurones convolutifs (CNN). Il est conçu pour être utilisé dans des applications de détection de somnolence, notamment pour les conducteurs.
@@ -31,7 +30,7 @@ Vous pouvez installer ces bibliothèques en utilisant pip :
 
 ```bash
 pip install opencv-python numpy matplotlib tensorflow scikit-learn streamlit pygame
-```
+ 
 
 ## Utilisation
 
