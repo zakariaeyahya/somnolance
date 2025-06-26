@@ -137,6 +137,3 @@ Ce script est conçu pour détecter la somnolence d'un conducteur en utilisant u
 ## Licence
 
 Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
-```
-
- 
